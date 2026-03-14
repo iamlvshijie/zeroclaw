@@ -189,6 +189,13 @@ const MEMORY_CONTEXT_ENTRY_MAX_CHARS: usize = 800;
 const MEMORY_CONTEXT_MAX_CHARS: usize = 4_000;
 const CHANNEL_HISTORY_COMPACT_KEEP_MESSAGES: usize = 12;
 const CHANNEL_HISTORY_COMPACT_CONTENT_CHARS: usize = 600;
+/// Conservative token budget for channel history. Before sending to the model,
+/// the history is proactively truncated to fit within this limit using a
+/// character-based estimate (~4 chars per token). This prevents context-window
+/// overflow errors that would otherwise require a round-trip to the API.
+const MAX_HISTORY_ESTIMATED_TOKENS: usize = 100_000;
+/// Approximate characters per token for the conservative estimator.
+const CHARS_PER_TOKEN_ESTIMATE: usize = 4;
 /// Guardrail for hook-modified outbound channel content.
 const CHANNEL_HOOK_MAX_OUTBOUND_CHARS: usize = 20_000;
 
@@ -917,6 +924,52 @@ fn compact_sender_history(ctx: &ChannelRuntimeContext, sender_key: &str) -> bool
 
     *turns = compacted;
     true
+}
+
+/// Estimate the total token count of a message list using a conservative
+/// character-based heuristic (~4 characters per token).
+fn estimate_history_tokens(messages: &[ChatMessage]) -> usize {
+    messages
+        .iter()
+        .map(|m| m.content.len().div_ceil(CHARS_PER_TOKEN_ESTIMATE))
+        .sum()
+}
+
+/// Proactively truncate conversation history so the estimated token count
+/// stays within `MAX_HISTORY_ESTIMATED_TOKENS`.  The system message (first
+/// element) and the most recent user message (last element) are always
+/// preserved; the oldest non-system turns are dropped first.
+///
+/// Returns `true` if any messages were removed.
+fn truncate_history_to_token_budget(history: &mut Vec<ChatMessage>) -> bool {
+    if history.len() <= 2 {
+        return false;
+    }
+
+    let mut estimated = estimate_history_tokens(history);
+    if estimated <= MAX_HISTORY_ESTIMATED_TOKENS {
+        return false;
+    }
+
+    let mut removed = 0usize;
+    // Remove oldest non-system messages (index 1 .. len-1) until within budget.
+    while estimated > MAX_HISTORY_ESTIMATED_TOKENS && history.len() > 2 {
+        let dropped_tokens = history[1].content.len().div_ceil(CHARS_PER_TOKEN_ESTIMATE);
+        history.remove(1);
+        estimated = estimated.saturating_sub(dropped_tokens);
+        removed += 1;
+    }
+
+    if removed > 0 {
+        tracing::info!(
+            removed_turns = removed,
+            estimated_tokens = estimated,
+            remaining_turns = history.len(),
+            "Proactively truncated channel history to fit token budget"
+        );
+    }
+
+    removed > 0
 }
 
 fn append_sender_turn(ctx: &ChannelRuntimeContext, sender_key: &str, turn: ChatMessage) {
@@ -1814,6 +1867,12 @@ async fn process_channel_message(
         build_channel_system_prompt(ctx.system_prompt.as_str(), &msg.channel, &msg.reply_target);
     let mut history = vec![ChatMessage::system(system_prompt)];
     history.extend(prior_turns);
+
+    // Proactively truncate history to avoid context-window overflow errors.
+    // This drops the oldest non-system turns until the estimated token count
+    // is within the budget, preventing a wasted round-trip to the API.
+    truncate_history_to_token_budget(&mut history);
+
     let use_streaming = target_channel
         .as_ref()
         .is_some_and(|ch| ch.supports_draft_updates());
@@ -4018,6 +4077,62 @@ mod tests {
                 || (len <= CHANNEL_HISTORY_COMPACT_CONTENT_CHARS + 3
                     && turn.content.ends_with("..."))
         }));
+    }
+
+    #[test]
+    fn estimate_history_tokens_basic() {
+        let messages = vec![
+            ChatMessage::system("a".repeat(400)),  // 100 tokens
+            ChatMessage::user("b".repeat(800)),    // 200 tokens
+        ];
+        assert_eq!(estimate_history_tokens(&messages), 300);
+    }
+
+    #[test]
+    fn truncate_history_within_budget_is_noop() {
+        let mut history = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("short message"),
+        ];
+        assert!(!truncate_history_to_token_budget(&mut history));
+        assert_eq!(history.len(), 2);
+    }
+
+    #[test]
+    fn truncate_history_drops_oldest_non_system_turns() {
+        // Build history that exceeds MAX_HISTORY_ESTIMATED_TOKENS.
+        // Each turn ~25K tokens => 5 turns = 125K tokens > 100K budget.
+        let big = "x".repeat(100_000); // ~25K tokens each
+        let mut history = vec![
+            ChatMessage::system("system prompt"),
+            ChatMessage::user(big.clone()),
+            ChatMessage::assistant(big.clone()),
+            ChatMessage::user(big.clone()),
+            ChatMessage::assistant(big.clone()),
+            ChatMessage::user("latest question"),
+        ];
+        assert!(truncate_history_to_token_budget(&mut history));
+        // System prompt and latest question must survive
+        assert_eq!(history[0].role, "system");
+        assert_eq!(history.last().unwrap().content, "latest question");
+        // Total estimated tokens should now be within budget
+        assert!(estimate_history_tokens(&history) <= MAX_HISTORY_ESTIMATED_TOKENS);
+    }
+
+    #[test]
+    fn truncate_history_preserves_system_and_last_user() {
+        // Two messages only — should never truncate below 2
+        let big = "y".repeat(500_000);
+        let mut history = vec![
+            ChatMessage::system(big.clone()),
+            ChatMessage::user(big),
+        ];
+        // Even if over budget, cannot drop below 2
+        let result = truncate_history_to_token_budget(&mut history);
+        assert_eq!(history.len(), 2);
+        // If still over budget after removing all middle messages, that's OK —
+        // the function only drops middle turns.
+        assert!(!result);
     }
 
     #[test]
