@@ -19,9 +19,12 @@
 pub mod anthropic;
 pub mod azure_openai;
 pub mod bedrock;
+pub mod claude_code;
 pub mod compatible;
 pub mod copilot;
 pub mod gemini;
+pub mod gemini_cli;
+pub mod kilocli;
 pub mod ollama;
 pub mod openai;
 pub mod openai_codex;
@@ -677,6 +680,7 @@ pub struct ProviderRuntimeOptions {
     pub zeroclaw_dir: Option<PathBuf>,
     pub secrets_encrypt: bool,
     pub reasoning_enabled: Option<bool>,
+    pub reasoning_effort: Option<String>,
     /// HTTP request timeout in seconds for LLM provider API calls.
     /// `None` uses the provider's built-in default (120s for compatible providers).
     pub provider_timeout_secs: Option<u64>,
@@ -696,6 +700,7 @@ impl Default for ProviderRuntimeOptions {
             zeroclaw_dir: None,
             secrets_encrypt: true,
             reasoning_enabled: None,
+            reasoning_effort: None,
             provider_timeout_secs: None,
             extra_headers: std::collections::HashMap::new(),
             api_path: None,
@@ -815,6 +820,26 @@ fn resolve_provider_credential(name: &str, credential_override: Option<&str>) ->
                 if let Some(credential) = resolve_minimax_oauth_refresh_token(name) {
                     return Some(credential);
                 }
+            } else if name == "anthropic" || name == "openai" || name == "groq" {
+                // For well-known providers, prefer provider-specific env vars over the
+                // global api_key override, since the global key may belong to a different
+                // provider (e.g. a custom: gateway). This enables multi-provider setups
+                // where the primary uses a custom gateway and fallbacks use named providers.
+                let env_candidates: &[&str] = match name {
+                    "anthropic" => &["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+                    "openai" => &["OPENAI_API_KEY"],
+                    "groq" => &["GROQ_API_KEY"],
+                    _ => &[],
+                };
+                for env_var in env_candidates {
+                    if let Ok(val) = std::env::var(env_var) {
+                        let trimmed = val.trim().to_string();
+                        if !trimmed.is_empty() {
+                            return Some(trimmed);
+                        }
+                    }
+                }
+                return Some(trimmed_override.to_owned());
             } else {
                 return Some(trimmed_override.to_owned());
             }
@@ -1013,12 +1038,16 @@ fn create_provider_with_url_and_options(
     // headers to OpenAI-compatible providers before boxing them as trait objects.
     let compat = {
         let timeout = options.provider_timeout_secs;
+        let reasoning_effort = options.reasoning_effort.clone();
         let extra_headers = options.extra_headers.clone();
         let api_path = options.api_path.clone();
         move |p: OpenAiCompatibleProvider| -> Box<dyn Provider> {
             let mut p = p;
             if let Some(t) = timeout {
                 p = p.with_timeout_secs(t);
+            }
+            if let Some(ref effort) = reasoning_effort {
+                p = p.with_reasoning_effort(Some(effort.clone()));
             }
             if !extra_headers.is_empty() {
                 p = p.with_extra_headers(extra_headers.clone());
@@ -1251,6 +1280,9 @@ fn create_provider_with_url_and_options(
             "Cohere", "https://api.cohere.com/compatibility", key, AuthStyle::Bearer,
         ))),
         "copilot" | "github-copilot" => Ok(Box::new(copilot::CopilotProvider::new(key))),
+        "claude-code" => Ok(Box::new(claude_code::ClaudeCodeProvider::new())),
+        "gemini-cli" => Ok(Box::new(gemini_cli::GeminiCliProvider::new())),
+        "kilocli" | "kilo" => Ok(Box::new(kilocli::KiloCliProvider::new())),
         "lmstudio" | "lm-studio" => {
             let lm_studio_key = key
                 .map(str::trim)
@@ -1901,6 +1933,24 @@ pub fn list_providers() -> Vec<ProviderInfo> {
             display_name: "GitHub Copilot",
             aliases: &["github-copilot"],
             local: false,
+        },
+        ProviderInfo {
+            name: "claude-code",
+            display_name: "Claude Code (CLI)",
+            aliases: &[],
+            local: true,
+        },
+        ProviderInfo {
+            name: "gemini-cli",
+            display_name: "Gemini CLI",
+            aliases: &[],
+            local: true,
+        },
+        ProviderInfo {
+            name: "kilocli",
+            display_name: "KiloCLI",
+            aliases: &["kilo"],
+            local: true,
         },
         ProviderInfo {
             name: "lmstudio",
@@ -2721,6 +2771,22 @@ mod tests {
     }
 
     #[test]
+    fn factory_claude_code() {
+        assert!(create_provider("claude-code", None).is_ok());
+    }
+
+    #[test]
+    fn factory_gemini_cli() {
+        assert!(create_provider("gemini-cli", None).is_ok());
+    }
+
+    #[test]
+    fn factory_kilocli() {
+        assert!(create_provider("kilocli", None).is_ok());
+        assert!(create_provider("kilo", None).is_ok());
+    }
+
+    #[test]
     fn factory_nvidia() {
         assert!(create_provider("nvidia", Some("nvapi-test")).is_ok());
         assert!(create_provider("nvidia-nim", Some("nvapi-test")).is_ok());
@@ -3053,6 +3119,9 @@ mod tests {
             "perplexity",
             "cohere",
             "copilot",
+            "claude-code",
+            "gemini-cli",
+            "kilocli",
             "nvidia",
             "astrai",
             "ovhcloud",

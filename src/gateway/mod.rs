@@ -370,6 +370,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             zeroclaw_dir: config.config_path.parent().map(std::path::PathBuf::from),
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
+            reasoning_effort: config.runtime.reasoning_effort.clone(),
             provider_timeout_secs: Some(config.provider_timeout_secs),
             extra_headers: config.extra_headers.clone(),
             api_path: config.api_path.clone(),
@@ -838,7 +839,9 @@ async fn handle_pair(
     match state.pairing.try_pair(code, &rate_key).await {
         Ok(Some(token)) => {
             tracing::info!("🔐 New client paired successfully");
-            if let Err(err) = persist_pairing_tokens(state.config.clone(), &state.pairing).await {
+            if let Err(err) =
+                Box::pin(persist_pairing_tokens(state.config.clone(), &state.pairing)).await
+            {
                 tracing::error!("🔐 Pairing succeeded but token persistence failed: {err:#}");
                 let body = serde_json::json!({
                     "paired": true,
@@ -2041,7 +2044,7 @@ mod tests {
         assert!(guard.is_authenticated(&token));
 
         let shared_config = Arc::new(Mutex::new(config));
-        persist_pairing_tokens(shared_config.clone(), &guard)
+        Box::pin(persist_pairing_tokens(shared_config.clone(), &guard))
             .await
             .unwrap();
 
