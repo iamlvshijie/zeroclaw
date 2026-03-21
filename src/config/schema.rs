@@ -261,6 +261,10 @@ pub struct Config {
     #[serde(default)]
     pub multimodal: MultimodalConfig,
 
+    /// Automatic media understanding pipeline (`[media_pipeline]`).
+    #[serde(default)]
+    pub media_pipeline: MediaPipelineConfig,
+
     /// Web fetch tool configuration (`[web_fetch]`).
     #[serde(default)]
     pub web_fetch: WebFetchConfig,
@@ -1423,6 +1427,44 @@ impl Default for MultimodalConfig {
             max_images: default_multimodal_max_images(),
             max_image_size_mb: default_multimodal_max_image_size_mb(),
             allow_remote_fetch: false,
+        }
+    }
+}
+
+// ── Media Pipeline ──────────────────────────────────────────────
+
+/// Automatic media understanding pipeline configuration (`[media_pipeline]`).
+///
+/// When enabled, inbound channel messages with media attachments are
+/// pre-processed before reaching the agent: audio is transcribed, images are
+/// annotated, and videos are summarised.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MediaPipelineConfig {
+    /// Master toggle for the media pipeline (default: false).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Transcribe audio attachments using the configured transcription provider.
+    #[serde(default = "default_true")]
+    pub transcribe_audio: bool,
+
+    /// Add image descriptions when a vision-capable model is active.
+    #[serde(default = "default_true")]
+    pub describe_images: bool,
+
+    /// Summarize video attachments (placeholder — requires external API).
+    #[serde(default = "default_true")]
+    pub summarize_video: bool,
+}
+
+impl Default for MediaPipelineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            transcribe_audio: true,
+            describe_images: true,
+            summarize_video: true,
         }
     }
 }
@@ -6786,6 +6828,7 @@ impl Default for Config {
             browser_delegate: crate::tools::browser_delegate::BrowserDelegateConfig::default(),
             http_request: HttpRequestConfig::default(),
             multimodal: MultimodalConfig::default(),
+            media_pipeline: MediaPipelineConfig::default(),
             web_fetch: WebFetchConfig::default(),
             text_browser: TextBrowserConfig::default(),
             web_search: WebSearchConfig::default(),
@@ -9708,6 +9751,7 @@ default_temperature = 0.7
             browser_delegate: crate::tools::browser_delegate::BrowserDelegateConfig::default(),
             http_request: HttpRequestConfig::default(),
             multimodal: MultimodalConfig::default(),
+            media_pipeline: MediaPipelineConfig::default(),
             web_fetch: WebFetchConfig::default(),
             text_browser: TextBrowserConfig::default(),
             web_search: WebSearchConfig::default(),
@@ -10089,6 +10133,7 @@ default_temperature = 0.7
             browser_delegate: crate::tools::browser_delegate::BrowserDelegateConfig::default(),
             http_request: HttpRequestConfig::default(),
             multimodal: MultimodalConfig::default(),
+            media_pipeline: MediaPipelineConfig::default(),
             web_fetch: WebFetchConfig::default(),
             text_browser: TextBrowserConfig::default(),
             web_search: WebSearchConfig::default(),

@@ -28,6 +28,7 @@ pub mod linq;
 #[cfg(feature = "channel-matrix")]
 pub mod matrix;
 pub mod mattermost;
+pub mod media_pipeline;
 pub mod mochat;
 pub mod nextcloud_talk;
 #[cfg(feature = "channel-nostr")]
@@ -358,6 +359,8 @@ struct ChannelRuntimeContext {
     message_timeout_secs: u64,
     interrupt_on_new_message: InterruptOnNewMessageConfig,
     multimodal: crate::config::MultimodalConfig,
+    media_pipeline: crate::config::MediaPipelineConfig,
+    transcription_config: crate::config::TranscriptionConfig,
     hooks: Option<Arc<crate::hooks::HookRunner>>,
     non_cli_excluded_tools: Arc<Vec<String>>,
     autonomy_level: AutonomyLevel,
@@ -2057,6 +2060,17 @@ async fn process_channel_message(
     } else {
         msg
     };
+
+    // ── Media pipeline: enrich inbound message with media annotations ──
+    if ctx.media_pipeline.enabled && !msg.attachments.is_empty() {
+        let vision = ctx.provider.supports_vision();
+        let pipeline = media_pipeline::MediaPipeline::new(
+            &ctx.media_pipeline,
+            &ctx.transcription_config,
+            vision,
+        );
+        msg.content = Box::pin(pipeline.process(&msg.content, &msg.attachments)).await;
+    }
 
     let target_channel = ctx
         .channels_by_name
@@ -4617,6 +4631,8 @@ pub async fn start_channels(config: Config) -> Result<()> {
             matrix: interrupt_on_new_message_matrix,
         },
         multimodal: config.multimodal.clone(),
+        media_pipeline: config.media_pipeline.clone(),
+        transcription_config: config.transcription.clone(),
         hooks: if config.hooks.enabled {
             let mut runner = crate::hooks::HookRunner::new();
             if config.hooks.builtin.command_logger {
@@ -4988,6 +5004,8 @@ mod tests {
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             provider_runtime_options: providers::ProviderRuntimeOptions::default(),
             workspace_dir: Arc::new(std::env::temp_dir()),
@@ -5105,6 +5123,8 @@ mod tests {
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             provider_runtime_options: providers::ProviderRuntimeOptions::default(),
             workspace_dir: Arc::new(std::env::temp_dir()),
@@ -5178,6 +5198,8 @@ mod tests {
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             provider_runtime_options: providers::ProviderRuntimeOptions::default(),
             workspace_dir: Arc::new(std::env::temp_dir()),
@@ -5270,6 +5292,8 @@ mod tests {
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             provider_runtime_options: providers::ProviderRuntimeOptions::default(),
             workspace_dir: Arc::new(std::env::temp_dir()),
@@ -5819,6 +5843,8 @@ BTC is currently around $65,000 based on latest tool output."#
             autonomy_level: AutonomyLevel::default(),
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
@@ -5844,6 +5870,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -5901,6 +5928,8 @@ BTC is currently around $65,000 based on latest tool output."#
             autonomy_level: AutonomyLevel::default(),
             tool_call_dedup_exempt: Arc::new(Vec::new()),
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             model_routes: Arc::new(Vec::new()),
             query_classification: crate::config::QueryClassificationConfig::default(),
@@ -5926,6 +5955,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -5994,6 +6024,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6022,6 +6054,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 3,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -6075,6 +6108,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6103,6 +6138,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 2,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -6166,6 +6202,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6194,6 +6232,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -6278,6 +6317,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6306,6 +6347,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 2,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -6371,6 +6413,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6399,6 +6443,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 3,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -6479,6 +6524,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6507,6 +6554,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 4,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -6572,6 +6620,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6600,6 +6650,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -6655,6 +6706,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6683,6 +6736,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 2,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -6853,6 +6907,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6880,6 +6936,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 1,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         })
         .await
         .unwrap();
@@ -6892,6 +6949,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 2,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         })
         .await
         .unwrap();
@@ -6956,6 +7014,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -6984,6 +7044,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             })
             .await
             .unwrap();
@@ -6997,6 +7058,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 2,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             })
             .await
             .unwrap();
@@ -7077,6 +7139,8 @@ BTC is currently around $65,000 based on latest tool output."#
             show_tool_calls: true,
             session_store: None,
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -7102,6 +7166,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: Some("1741234567.100001".to_string()),
                 interruption_scope_id: Some("1741234567.100001".to_string()),
+                attachments: vec![],
             })
             .await
             .unwrap();
@@ -7115,6 +7180,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 2,
                 thread_ts: Some("1741234567.100001".to_string()),
                 interruption_scope_id: Some("1741234567.100001".to_string()),
+                attachments: vec![],
             })
             .await
             .unwrap();
@@ -7189,6 +7255,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -7217,6 +7285,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             })
             .await
             .unwrap();
@@ -7230,6 +7299,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 2,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             })
             .await
             .unwrap();
@@ -7286,6 +7356,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -7314,6 +7386,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -7367,6 +7440,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -7395,6 +7470,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -7920,6 +7996,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 1,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         };
 
         assert_eq!(conversation_memory_key(&msg), "slack_U123_msg_abc123");
@@ -7936,6 +8013,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 1,
             thread_ts: Some("1741234567.123456".into()),
             interruption_scope_id: None,
+            attachments: vec![],
         };
 
         assert_eq!(
@@ -7955,6 +8033,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 1,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         };
 
         assert_eq!(followup_thread_id(&msg).as_deref(), Some("msg_abc123"));
@@ -7971,6 +8050,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 1,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         };
         let msg2 = traits::ChannelMessage {
             id: "msg_2".into(),
@@ -7981,6 +8061,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 2,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         };
 
         assert_ne!(
@@ -8003,6 +8084,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 1,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         };
         let msg2 = traits::ChannelMessage {
             id: "msg_2".into(),
@@ -8013,6 +8095,7 @@ BTC is currently around $65,000 based on latest tool output."#
             timestamp: 2,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         };
 
         mem.store(
@@ -8134,6 +8217,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -8162,6 +8247,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -8178,6 +8264,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 2,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -8266,6 +8353,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -8294,6 +8383,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -8326,6 +8416,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 2,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -8364,6 +8455,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 3,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -8438,6 +8530,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -8466,6 +8560,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -8547,6 +8642,8 @@ BTC is currently around $65,000 based on latest tool output."#
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -8575,6 +8672,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -9120,6 +9218,8 @@ This is an example JSON object for profile settings."#;
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -9149,6 +9249,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -9208,6 +9309,8 @@ This is an example JSON object for profile settings."#;
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -9236,6 +9339,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -9252,6 +9356,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 2,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -9371,6 +9476,8 @@ This is an example JSON object for profile settings."#;
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -9399,6 +9506,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -9483,6 +9591,8 @@ This is an example JSON object for profile settings."#;
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -9511,6 +9621,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -9587,6 +9698,8 @@ This is an example JSON object for profile settings."#;
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -9615,6 +9728,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -9711,6 +9825,8 @@ This is an example JSON object for profile settings."#;
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -9739,6 +9855,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 1,
                 thread_ts: None,
                 interruption_scope_id: None,
+                attachments: vec![],
             },
             CancellationToken::new(),
         )
@@ -9896,6 +10013,7 @@ This is an example JSON object for profile settings."#;
             timestamp: 0,
             thread_ts: None,
             interruption_scope_id: None,
+            attachments: vec![],
         };
         assert_eq!(interruption_scope_key(&msg), "matrix_room_alice");
     }
@@ -9911,6 +10029,7 @@ This is an example JSON object for profile settings."#;
             timestamp: 0,
             thread_ts: Some("$thread1".into()),
             interruption_scope_id: Some("$thread1".into()),
+            attachments: vec![],
         };
         assert_eq!(interruption_scope_key(&msg), "matrix_room_alice_$thread1");
     }
@@ -9927,6 +10046,7 @@ This is an example JSON object for profile settings."#;
             timestamp: 0,
             thread_ts: Some("1234567890.000100".into()), // Slack top-level fallback
             interruption_scope_id: None,                 // but NOT a thread reply
+            attachments: vec![],
         };
         assert_eq!(interruption_scope_key(&msg), "slack_C123_alice");
     }
@@ -9973,6 +10093,8 @@ This is an example JSON object for profile settings."#;
                 matrix: false,
             },
             multimodal: crate::config::MultimodalConfig::default(),
+            media_pipeline: crate::config::MediaPipelineConfig::default(),
+            transcription_config: crate::config::TranscriptionConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
             autonomy_level: AutonomyLevel::default(),
@@ -10003,6 +10125,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 1,
                 thread_ts: Some("1741234567.100001".to_string()),
                 interruption_scope_id: Some("1741234567.100001".to_string()),
+                attachments: vec![],
             })
             .await
             .unwrap();
@@ -10016,6 +10139,7 @@ This is an example JSON object for profile settings."#;
                 timestamp: 2,
                 thread_ts: Some("1741234567.200002".to_string()),
                 interruption_scope_id: Some("1741234567.200002".to_string()),
+                attachments: vec![],
             })
             .await
             .unwrap();
