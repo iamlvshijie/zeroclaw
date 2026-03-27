@@ -2143,6 +2143,7 @@ pub(crate) async fn agent_turn(
         0,    // max_tool_result_chars: 0 = disabled (legacy callers)
         0,    // context_token_budget: 0 = disabled (legacy callers)
         None, // shared_budget: no shared budget for legacy callers
+        None, // receipt_generator
     )
     .await
 }
@@ -2281,6 +2282,7 @@ pub(crate) async fn run_tool_call_loop(
     max_tool_result_chars: usize,
     context_token_budget: usize,
     shared_budget: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    receipt_generator: Option<&crate::agent::tool_receipts::ReceiptGenerator>,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -2968,6 +2970,7 @@ pub(crate) async fn run_tool_call_loop(
                                 success: false,
                                 error_reason: Some(scrub_credentials(&reason)),
                                 duration: Duration::ZERO,
+                                receipt: None,
                             },
                         ));
                         continue;
@@ -3037,6 +3040,7 @@ pub(crate) async fn run_tool_call_loop(
                                 success: false,
                                 error_reason: Some(denied),
                                 duration: Duration::ZERO,
+                                receipt: None,
                             },
                         ));
                         continue;
@@ -3086,6 +3090,7 @@ pub(crate) async fn run_tool_call_loop(
                         success: false,
                         error_reason: Some(duplicate),
                         duration: Duration::ZERO,
+                        receipt: None,
                     },
                 ));
                 continue;
@@ -3148,6 +3153,7 @@ pub(crate) async fn run_tool_call_loop(
                 activated_tools,
                 observer,
                 cancellation_token.as_ref(),
+                receipt_generator,
             )
             .await?
         } else {
@@ -3157,6 +3163,7 @@ pub(crate) async fn run_tool_call_loop(
                 activated_tools,
                 observer,
                 cancellation_token.as_ref(),
+                receipt_generator,
             )
             .await?
         };
@@ -3267,7 +3274,11 @@ pub(crate) async fn run_tool_call_loop(
                     }
                 }
             }
-            let result_output = truncate_tool_result(&outcome.output, max_tool_result_chars);
+            let mut result_output = truncate_tool_result(&outcome.output, max_tool_result_chars);
+            // Append HMAC receipt to tool result when receipts are enabled (#4810 research)
+            if let Some(ref receipt) = outcome.receipt {
+                result_output = format!("{result_output}\n\n[receipt: {receipt}]");
+            }
             individual_results.push((tool_call_id, result_output.clone()));
             let _ = writeln!(
                 tool_results,
@@ -3964,6 +3975,7 @@ pub async fn run(
                 config.agent.max_tool_result_chars,
                 config.agent.max_context_tokens,
                 None, // shared_budget
+                None, // receipt_generator
             )
             .await
             {
@@ -4270,6 +4282,7 @@ pub async fn run(
                     config.agent.max_tool_result_chars,
                     config.agent.max_context_tokens,
                     None, // shared_budget
+                    None, // receipt_generator
                 )
                 .await
                 {
@@ -5109,8 +5122,16 @@ mod tests {
             .expect("should produce a sample whose byte index 300 is not a char boundary");
 
         let observer = NoopObserver;
-        let result =
-            execute_one_tool("unknown_tool", call_arguments, &[], None, &observer, None).await;
+        let result = execute_one_tool(
+            "unknown_tool",
+            call_arguments,
+            &[],
+            None,
+            &observer,
+            None,
+            None,
+        )
+        .await;
         assert!(result.is_ok(), "execute_one_tool should not panic or error");
 
         let outcome = result.unwrap();
@@ -5139,6 +5160,7 @@ mod tests {
             Some(&activated),
             &observer,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("suffix alias should execute the unique activated tool");
@@ -5783,6 +5805,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect_err("provider without vision support should fail");
@@ -5838,6 +5861,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect_err("oversized payload must fail");
@@ -5887,6 +5911,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("valid multimodal payload should pass");
@@ -5935,6 +5960,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect_err("should fail without vision_provider config");
@@ -5990,6 +6016,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect_err("should fail when vision provider cannot be created");
@@ -6045,6 +6072,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("text-only messages should succeed with default provider");
@@ -6101,6 +6129,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect_err("should fail due to nonexistent vision provider");
@@ -6155,6 +6184,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("empty image markers should not trigger vision routing");
@@ -6209,6 +6239,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect_err("should attempt vision provider creation for multiple images");
@@ -6346,6 +6377,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("parallel execution should complete");
@@ -6420,6 +6452,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("cron_add delivery defaults should be injected");
@@ -6486,6 +6519,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("explicit delivery mode should be preserved");
@@ -6547,6 +6581,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("loop should finish after deduplicating repeated calls");
@@ -6620,6 +6655,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("non-interactive shell should succeed for low-risk command");
@@ -6684,6 +6720,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("loop should finish with exempt tool executing twice");
@@ -6768,6 +6805,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("loop should complete");
@@ -6829,6 +6867,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("native fallback id flow should complete");
@@ -6914,6 +6953,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("native tool-call text should be relayed through on_delta");
@@ -6983,6 +7023,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("streaming provider should complete");
@@ -7054,6 +7095,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("streaming tool loop should execute tool and finish");
@@ -7129,6 +7171,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("native streaming events should preserve tool loop semantics");
@@ -7213,6 +7256,7 @@ mod tests {
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("routed streaming provider should complete");
@@ -9226,6 +9270,7 @@ Let me check the result."#;
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("tool loop should complete");
@@ -9383,6 +9428,7 @@ Let me check the result."#;
                     0,
                     0,
                     None,
+                    None, // receipt_generator
                 ),
             )
             .await
@@ -9465,6 +9511,7 @@ Let me check the result."#;
                     0,
                     0,
                     None,
+                    None, // receipt_generator
                 ),
             )
             .await
@@ -9523,6 +9570,7 @@ Let me check the result."#;
             0,
             0,
             None,
+            None, // receipt_generator
         )
         .await
         .expect("should succeed without cost scope");
