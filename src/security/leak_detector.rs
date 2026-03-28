@@ -32,6 +32,8 @@ pub enum LeakResult {
 pub struct LeakDetector {
     /// Sensitivity threshold (0.0-1.0, higher = more aggressive detection).
     sensitivity: f64,
+    /// Enable high-entropy token detection.
+    high_entropy_detection: bool,
 }
 
 impl Default for LeakDetector {
@@ -43,13 +45,33 @@ impl Default for LeakDetector {
 impl LeakDetector {
     /// Create a new leak detector with default sensitivity.
     pub fn new() -> Self {
-        Self { sensitivity: 0.7 }
+        Self {
+            sensitivity: 0.7,
+            high_entropy_detection: true,
+        }
     }
 
     /// Create a detector with custom sensitivity.
     pub fn with_sensitivity(sensitivity: f64) -> Self {
         Self {
             sensitivity: sensitivity.clamp(0.0, 1.0),
+            high_entropy_detection: true,
+        }
+    }
+
+    /// Create a detector with high-entropy detection setting.
+    pub fn with_high_entropy_detection(high_entropy_detection: bool) -> Self {
+        Self {
+            sensitivity: 0.7,
+            high_entropy_detection,
+        }
+    }
+
+    /// Create a detector with custom sensitivity and high-entropy detection setting.
+    pub fn with_sensitivity_and_entropy(sensitivity: f64, high_entropy_detection: bool) -> Self {
+        Self {
+            sensitivity: sensitivity.clamp(0.0, 1.0),
+            high_entropy_detection,
         }
     }
 
@@ -65,7 +87,9 @@ impl LeakDetector {
         self.check_private_keys(content, &mut patterns, &mut redacted);
         self.check_jwt_tokens(content, &mut patterns, &mut redacted);
         self.check_database_urls(content, &mut patterns, &mut redacted);
-        self.check_high_entropy_tokens(content, &mut patterns, &mut redacted);
+        if self.high_entropy_detection {
+            self.check_high_entropy_tokens(content, &mut patterns, &mut redacted);
+        }
 
         if patterns.is_empty() {
             LeakResult::Clean

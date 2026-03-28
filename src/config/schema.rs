@@ -7287,6 +7287,10 @@ pub struct SecurityConfig {
     /// WebAuthn / FIDO2 hardware key authentication configuration.
     #[serde(default)]
     pub webauthn: WebAuthnConfig,
+
+    /// Credential leak detection configuration.
+    #[serde(default)]
+    pub leak_detection: LeakDetectionConfig,
 }
 
 /// WebAuthn / FIDO2 hardware key authentication configuration (`[security.webauthn]`).
@@ -7330,6 +7334,32 @@ fn default_webauthn_rp_origin() -> String {
 
 fn default_webauthn_rp_name() -> String {
     "ZeroClaw".into()
+}
+
+/// Credential leak detection configuration (`[security.leak_detection]`).
+///
+/// Controls credential leak detection behavior including scanning for high-entropy tokens
+/// that may represent API keys or other sensitive credentials.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct LeakDetectionConfig {
+    /// Enable leak detection. Default: true.
+    #[serde(default = "default_leak_detection_enabled")]
+    pub enabled: bool,
+
+    /// Enable high-entropy token detection. Default: true.
+    ///
+    /// When enabled, scans for tokens with high entropy that match credential patterns
+    /// (mixed alphanumeric, minimum length). Can be disabled if false positives are common.
+    #[serde(default = "default_high_entropy_detection")]
+    pub high_entropy_detection: bool,
+}
+
+fn default_leak_detection_enabled() -> bool {
+    true
+}
+
+fn default_high_entropy_detection() -> bool {
+    true
 }
 
 /// OTP validation strategy.

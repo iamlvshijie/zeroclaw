@@ -461,8 +461,12 @@ impl RedactedOutput {
 
 /// Scan cron job output for credential leaks and return redacted output if leaks are detected.
 /// Logs a warning with channel, target, and detected patterns when credentials are found.
-fn scan_and_redact_output(channel: &str, target: &str, output: &str) -> RedactedOutput {
-    let leak_detector = crate::security::LeakDetector::new();
+fn scan_and_redact_output(channel: &str, target: &str, output: &str, leak_detection_config: &crate::config::schema::LeakDetectionConfig) -> RedactedOutput {
+    if !leak_detection_config.enabled {
+        return RedactedOutput(output.to_string());
+    }
+
+    let leak_detector = crate::security::LeakDetector::with_high_entropy_detection(leak_detection_config.high_entropy_detection);
     let leak_check = leak_detector.scan(output);
 
     match leak_check {
@@ -486,7 +490,7 @@ pub(crate) async fn deliver_announcement(
     output: &str,
 ) -> Result<()> {
     // Scan for credential leaks before delivering cron job output to channel.
-    let safe_output = scan_and_redact_output(channel, target, output);
+    let safe_output = scan_and_redact_output(channel, target, output, &config.security.leak_detection);
 
     // Try the live channel registry first -- this reuses the daemon's
     // connected channel instances, which is required for stateful
@@ -1474,7 +1478,7 @@ mod tests {
     fn scan_and_redact_output_redacts_credentials() {
         let leaked_output = "Deployment key: sk_test_FAKE1234567890abcdefgh"; // gitleaks:allow
 
-        let redacted = scan_and_redact_output("telegram", "123456", leaked_output);
+        let redacted = scan_and_redact_output("telegram", "123456", leaked_output, &Default::default());
 
         assert!(
             !redacted.as_str().contains("sk_test_FAKE1234567890abcdefgh"), // gitleaks:allow
@@ -1487,7 +1491,7 @@ mod tests {
     fn scan_and_redact_output_preserves_clean_output() {
         let clean_output = "Deployment completed successfully at 2024-03-15 10:00:00";
 
-        let redacted = scan_and_redact_output("telegram", "123456", clean_output);
+        let redacted = scan_and_redact_output("telegram", "123456", clean_output, &Default::default());
 
         assert_eq!(redacted.as_str(), clean_output);
     }
