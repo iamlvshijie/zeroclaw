@@ -426,7 +426,7 @@ async fn node_persistence_crud() {
     persistence.persist_node(
         "phone-1",
         Some("android"),
-        &vec![cap("updated", "Updated cap")],
+        &[cap("updated", "Updated cap")],
         Some("device-123"),
     );
     let nodes = persistence.list_persisted_nodes();
